@@ -279,19 +279,20 @@ router.post("/withdraw", async (req, res) => {
     }
 
     // persist transcation to db
-    const originatorConversationID = data.OriginatorConversationID;
-    await db.collection("withdrawals").doc(originatorConversationID).set({
+    const conversationID = data.ConversationID;
+
+    await db.collection("withdrawals").doc(conversationID).set({
       phone,
       amount,
       status: "pending",
-      originatorConversationID,
-      conversationID: data.ConversationID,
+      conversationID,
+      originatorConversationID: data.OriginatorConversationID,
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
     });
 
     await db.collection("users").doc(phone).update({
-      originatorConversationID,
+      conversationID,
       updatedAt: Timestamp.now(),
     });
 
@@ -319,8 +320,8 @@ router.post("/result", async (req, res) => {
 
     const {
       ResultCode: resultCode,
-      OriginatorConversationID: originatorConversationID,
       ResultDesc: resultDesc,
+      ConversationID: conversationID,
       TransactionID: transactionID,
       ResultParameters = {},
     } = Result;
@@ -336,12 +337,13 @@ router.post("/result", async (req, res) => {
     // update dbs accordingly
     const transactionRef = db
       .collection("withdrawals")
-      .doc(originatorConversationID);
+      .doc(conversationID);
     await transactionRef.update({
       status,
       resultCode,
       resultDesc,
       amount,
+      conversationID,
       mpesaCode: transactionID,
       updatedAt: Timestamp.now(),
     });
@@ -349,7 +351,7 @@ router.post("/result", async (req, res) => {
     if (status === "completed") {
       const userQuery = db
         .collection("users")
-        .where("originatorConversationID", "==", originatorConversationID)
+        .where("conversationID", "==", conversationID)
         .limit(1);
       const snapshot = await userQuery.get();
 
@@ -357,13 +359,13 @@ router.post("/result", async (req, res) => {
         const docRef = snapshot.docs[0].ref;
         await docRef.update({ balance: FieldValue.increment(-amount) });
         console.log(
-          `Balance updated successfully for user with originatorConversationID: ${originatorConversationID}`
+          `Balance updated successfully for user with conversationID: ${conversationID}`
         );
       }
     }
 
     console.log(
-      `Transaction ${originatorConversationID} updated with status: ${status}`
+      `Transaction ${conversationID} updated with status: ${status}`
     );
 
     res.status(200).json({ status: "success" });
@@ -386,26 +388,30 @@ router.post("/timeout", async (req, res) => {
 
     const {
       OriginatorConversationID: originatorConversationID,
+      ConversationID: conversationID,
       ResultDesc: resultDesc,
       ResultCode: resultCode,
+      TransactionID: transactionID,
     } = Result;
 
-    if (!originatorConversationID) {
-      throw new Error("Missing originator conversation ID")
+    if (!conversationID) {
+      throw new Error("Missing conversation ID");
     }
 
     // Update db
     const transactionRef = db
       .collection("withdrawals")
-      .doc(originatorConversationID);
+      .doc(conversationID);
     await transactionRef.update({
       status: "timeout",
       resultCode,
       resultDesc,
+      conversationID,
+      mpesaCode: transactionID,
       updatedAt: Timestamp.now(),
     });
 
-    console.log(`Transaction ${originatorConversationID} marked as timeout`);
+    console.log(`Transaction ${conversationID} marked as timeout`);
 
     return res.status(200).json({ status: "Timeout" });
   } catch (error) {

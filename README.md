@@ -104,7 +104,7 @@ SECURITY_CERT_PATH=./cert/SandboxCertificate.cer
 **NB:** You can replace Firestore with your favorite database.
 
 ## Security Considerations
-- The `ipWhitelist` middleware should be enforced in production to restrict access to sensitive endpoints.
+- The `ipWhitelist` [middleware](./middleware/whitelist.js) should be enforced in production to restrict access to sensitive endpoints.
 - Use environment variables instead of hardcoding sensitive credentials.
 
 ## Useful Resources
