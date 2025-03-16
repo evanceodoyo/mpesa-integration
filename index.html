@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>M-Pesa Integration</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        text-align: center;
+        margin-top: 50px;
+      }
+      .input-group {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin: 10px 0;
+      }
+      input {
+        padding: 8px;
+        width: 250px;
+      }
+      button {
+        padding: 10px 20px;
+        background: green;
+        color: white;
+        border: none;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: gray;
+        cursor: not-allowed;
+      }
+      .balance-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+    </style>
+  </head>
+<body>
+    <h2>M-Pesa Payment</h2>
+    <div class="input-group">
+        <input type="text" id="payPhoneNumber" placeholder="Enter phone number" required />
+        <input type="number" id="payAmount" placeholder="Enter amount" required />
+    </div>
+    <button id="payButton">Pay</button>
+    <p id="payMessage"></p>
+
+    <h2>M-Pesa Withdrawal</h2>
+    <div class="input-group">
+        <input type="text" id="withdrawPhoneNumber" placeholder="Enter phone number" required />
+        <input type="number" id="withdrawAmount" placeholder="Enter amount" required />
+    </div>
+    <button id="withdrawButton">Withdraw</button>
+    <p id="withdrawMessage"></p>
+
+    <h2>Check Balance</h2>
+    <div class="balance-container">
+        <input type="text" id="balancePhoneNumber" placeholder="Enter phone number" required />
+    </div>
+    <span id="balance" style="font-weight: 800">KES 0</span>
+    <p id="balanceMessage"></p>
+    <button id="checkBalance">Check Balance</button>
+
+    <script>
+      async function makeRequest(url, method, body = null) {
+        try {
+          const options = {
+            method,
+            headers: { "Content-Type": "application/json" },
+          };
+          if (body) options.body = JSON.stringify(body);
+
+          const response = await fetch(url, options);
+          const contentType = response.headers.get("content-type");
+
+          if (!contentType || !contentType.includes("application/json")) {
+            throw new Error(
+              "Invalid response format. Expected JSON but received something else."
+            );
+          }
+
+          return await response.json();
+        } catch (error) {
+          console.error("Request failed:", error);
+          return { error: "Request failed. Please try again." };
+        }
+      }
+
+      function validatePhoneNumber(phone) {
+        return /^(?:\+2547\d{8}|2547\d{8}|07\d{8}|7\d{8}|\+2541\d{8}|2541\d{8}|01\d{8}|1\d{8})$/.test(
+          phone
+        );
+      }
+
+      const baseURL = "https://indirectly-relaxed-rodent.ngrok-free.app"
+
+      document
+        .getElementById("payButton")
+        .addEventListener("click", async () => {
+          const phoneNumber = document
+            .getElementById("payPhoneNumber")
+            .value.trim();
+          const amount = parseFloat(
+            document.getElementById("payAmount").value.trim()
+          );
+          const message = document.getElementById("payMessage");
+
+          if (!validatePhoneNumber(phoneNumber))
+            return (message.textContent = "Invalid phone number format.");
+          if (isNaN(amount) || amount <= 0)
+            return (message.textContent = "Amount must be greater than 0.");
+
+          const data = await makeRequest(
+            `${baseURL}/api/pay`,
+            "POST",
+            { phoneNumber, amount }
+          );
+          message.textContent = data.error
+            ? `Error: ${data.error}`
+            : "Payment request sent successfully!";
+        });
+
+      document
+        .getElementById("withdrawButton")
+        .addEventListener("click", async () => {
+          const phoneNumber = document
+            .getElementById("withdrawPhoneNumber")
+            .value.trim();
+          const amount = parseFloat(
+            document.getElementById("withdrawAmount").value.trim()
+          );
+          const message = document.getElementById("withdrawMessage");
+
+          if (!validatePhoneNumber(phoneNumber))
+            return (message.textContent = "Invalid phone number format.");
+          if (isNaN(amount) || amount < 10)
+            return (message.textContent = "Minimum withdrawal amount is KES 10.");
+
+          const data = await makeRequest(
+            `${baseURL}/api/withdraw`,
+            "POST",
+            { phoneNumber, amount }
+          );
+          message.textContent = data.error
+            ? `Error: ${data.error}`
+            : "Withdrawal request sent successfully!";
+        });
+
+      document
+        .getElementById("checkBalance")
+        .addEventListener("click", async () => {
+          const phoneNumber = document
+            .getElementById("balancePhoneNumber")
+            .value.trim();
+          const balance = document.getElementById("balance");
+          const message = document.getElementById("balanceMessage");
+
+          // Reset UI before making the request
+          balance.textContent = "KES 0";
+          message.textContent = "";
+
+          if (!validatePhoneNumber(phoneNumber)) {
+            message.textContent = "Invalid phone number format.";
+            return;
+          }
+
+          const data = await makeRequest(
+            `http://localhost:3000/api/balance?phoneNumber=${encodeURIComponent(
+              phoneNumber
+            )}`,
+            "GET"
+          );
+
+          if (data.error || data.balance === undefined) {
+            message.textContent = `Error: ${data.error || "User not found."}`;
+          } else {
+            balance.textContent = `KES ${data.balance}`;
+          }
+        });
+    </script>
+  </body>
+</html>
