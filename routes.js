@@ -337,7 +337,7 @@ router.post("/reversal", async (req, res) => {
     RecieverIdentifierType: "11",
     ResultURL: `${config.API_BASE_URL}/reversal/results`,
     QueueTimeOutURL: `${config.API_BASE_URL}/timeout`,
-    Remarks: "Test",
+    Remarks: "Reverse transaction",
     Occassion: "work",
   };
 
@@ -370,7 +370,7 @@ router.post("/reversal", async (req, res) => {
 
 // For checking transaction status
 router.post("/transaction-status", async (req, res) => {
-  const { transactionID, originatorConversationID } = req.body;
+  const { transactionID } = req.body;
 
   if (!transactionID) {
     return res.status(400).json({ error: "Transaction ID required" });
@@ -385,15 +385,14 @@ router.post("/transaction-status", async (req, res) => {
   const requestBody = {
     Initiator: config.INITIATOR_NAME,
     SecurityCredential: securityCredential,
-    "Command ID": "TransactionStatusQuery",
-    "Transaction ID": transactionID,
-    OriginatorConversationID: originatorConversationID,
+    CommandID: "TransactionStatusQuery",
+    TransactionID: transactionID,
     PartyA: config.SHORTCODE,
-    IdentifierType: "4",
+    IdentifierType: "1",
     ResultURL: `${config.API_BASE_URL}/transaction-status/results`,
     QueueTimeOutURL: `${config.API_BASE_URL}/timeout`,
-    Remarks: "Transaction status checking",
-    Occassion: "OK",
+    Remarks: "Transaction status check",
+    Occassion: "",
   };
 
   try {
