@@ -11,6 +11,7 @@ const {
   saveUpdateUser,
   getUserDetails,
   updateTransaction,
+  processMpesaResponse,
 } = require("./helpers");
 
 
@@ -55,7 +56,7 @@ router.post("/pay", async (req, res) => {
       PartyA: phone,
       PartyB: config.SHORTCODE,
       PhoneNumber: phone,
-      CallBackURL: config.CALLBACK_URL,
+      CallBackURL: `${config.API_BASE_URL}/callback`,
       AccountReference: "Account",
       TransactionDesc: "Deposit",
     };
@@ -185,6 +186,7 @@ router.post("/validation", ipWhitelist, async (req, res) => {
   // No logic required (if no validation required)
 });
 
+
 // confirmation endpoint
 router.post("/confirmation", async (req, res) => {
   try {
@@ -251,8 +253,8 @@ router.post("/withdraw", async (req, res) => {
     PartyA: config.B2C_SHORTCODE,
     PartyB: phone,
     Remarks: "Withdrawal",
-    QueueTimeOutURL: config.QUEUE_TIMEOUT_URL,
-    ResultURL: config.RESULT_URL,
+    QueueTimeOutURL: `${config.API_BASE_URL}/timeout`,
+    ResultURL: `${config.API_BASE_URL}/withdraw/results`,
     Occassion: "User withdrawal",
   };
 
@@ -281,10 +283,9 @@ router.post("/withdraw", async (req, res) => {
     // persist transcation to db
     const conversationID = data.ConversationID;
 
-    await db.collection("withdrawals").doc(conversationID).set({
+    await db.collection("transactions").doc(conversationID).set({
       phone,
       amount,
-      status: "pending",
       conversationID,
       originatorConversationID: data.OriginatorConversationID,
       createdAt: Timestamp.now(),
@@ -308,77 +309,130 @@ router.post("/withdraw", async (req, res) => {
 });
 
 
-// Endpoint to handle B2C result callback
-router.post("/result", async (req, res) => {
+// Can be used by the organization if there's need for reversal
+router.post("/reversal", async (req, res) => {
+  const { transactionID, amount } = req.body;
+
+  if (!transactionID || !amount) {
+    return res.status(400).json({ error: "Missing transaction ID or amount" });
+  }
+
+  if (isNaN(amount)) {
+    return res.status(400).json({ error: "Amount must be a number" });
+  }
+
+  const securityCredential = generateSecurityCredential(
+    config.INITIATOR_PASSWORD,
+    config.SECURITY_CERT_PATH
+  );
+  const token = await generateToken();
+
+  const requestBody = {
+    Initiator: config.INITIATOR_NAME,
+    SecurityCredential: securityCredential,
+    CommandID: "TransactionReversal",
+    TransactionID: transactionID,
+    Amount: amount,
+    ReceiverParty: config.SHORTCODE,
+    RecieverIdentifierType: "11",
+    ResultURL: `${config.API_BASE_URL}/reversal/results`,
+    QueueTimeOutURL: `${config.API_BASE_URL}/timeout`,
+    Remarks: "Test",
+    Occassion: "work",
+  };
+
   try {
-    const { Result } = req.body;
-    console.log("B2C RESULT CALLBACK:", Result);
-
-    if (!Result) {
-      throw new Error("Invalid callback data");
-    }
-
-    const {
-      ResultCode: resultCode,
-      ResultDesc: resultDesc,
-      ConversationID: conversationID,
-      TransactionID: transactionID,
-      ResultParameters = {},
-    } = Result;
-
-    // safely extract transaction details
-    const resultItems = ResultParameters?.ResultParameter || [];
-    const getValue = (key) =>
-      resultItems.find((item) => item.Key === key)?.Value;
-
-    const amount = Number(getValue("TransactionAmount") || 0);
-    const status = resultCode === 0 ? "completed" : "failed";
-
-    // update dbs accordingly
-    const transactionRef = db
-      .collection("withdrawals")
-      .doc(conversationID);
-    await transactionRef.update({
-      status,
-      resultCode,
-      resultDesc,
-      amount,
-      conversationID,
-      mpesaCode: transactionID,
-      updatedAt: Timestamp.now(),
-    });
-
-    if (status === "completed") {
-      const userQuery = db
-        .collection("users")
-        .where("conversationID", "==", conversationID)
-        .limit(1);
-      const snapshot = await userQuery.get();
-
-      if (!snapshot.empty) {
-        const docRef = snapshot.docs[0].ref;
-        await docRef.update({ balance: FieldValue.increment(-amount) });
-        console.log(
-          `Balance updated successfully for user with conversationID: ${conversationID}`
-        );
+    const response = await fetch(
+      `${config.BASE_URL}/mpesa/reversal/v1/request`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
       }
-    }
-
-    console.log(
-      `Transaction ${conversationID} updated with status: ${status}`
     );
 
-    res.status(200).json({ status: "success" });
+    const data = await response.json();
+    console.log(data);
+    if (data?.ResponseCode !== 0) {
+      return res.status(400).json({ error: "Service request failed" });
+    }
+
+    return res.json(data);
   } catch (error) {
-    console.error("Error processing B2C result callback:", error);
+    console.error("Error requesting reversal:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
 
-// Endpoint to handle B2C timeout callback
+// For checking transaction status
+router.post("/transaction-status", async (req, res) => {
+  const { transactionID, originatorConversationID } = req.body;
+
+  if (!transactionID) {
+    return res.status(400).json({ error: "Transaction ID required" });
+  }
+
+  const securityCredential = generateSecurityCredential(
+    config.INITIATOR_PASSWORD,
+    config.SECURITY_CERT_PATH
+  );
+  const token = generateToken();
+
+  const requestBody = {
+    Initiator: config.INITIATOR_NAME,
+    SecurityCredential: securityCredential,
+    "Command ID": "TransactionStatusQuery",
+    "Transaction ID": transactionID,
+    OriginatorConversationID: originatorConversationID,
+    PartyA: config.SHORTCODE,
+    IdentifierType: "4",
+    ResultURL: `${config.API_BASE_URL}/transaction-status/results`,
+    QueueTimeOutURL: `${config.API_BASE_URL}/timeout`,
+    Remarks: "Transaction status checking",
+    Occassion: "OK",
+  };
+
+  try {
+    const response = await fetch(
+      `${config.BASE_URL}/mpesa/transactionstatus/v1/query`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      }
+    );
+
+    const data = await response.json();
+    console.log(data);
+
+    if (data?.ResponseCode !== 0) {
+      return res.status(400).json({ error: "Service request failed" });
+    }
+
+    return res.json(data);
+  } catch (error) {
+    console.error("Transaction Query Error", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+
+router.post("/withdraw/results", processMpesaResponse);
+router.post("/reversal/results", processMpesaResponse);
+router.post("/transaction-status/results", processMpesaResponse);
+
+
+// Endpoint to handle timeout
 router.post("/timeout", async (req, res) => {
   try {
-    console.log("B2C TIMEOUT:", req.body);
+    console.log("TIMEOUT:", req.body);
 
     const { Result } = req.body;
 
@@ -386,32 +440,26 @@ router.post("/timeout", async (req, res) => {
       throw new Error("Invalid callback data");
     }
 
-    const {
-      OriginatorConversationID: originatorConversationID,
-      ConversationID: conversationID,
-      ResultDesc: resultDesc,
-      ResultCode: resultCode,
-      TransactionID: transactionID,
-    } = Result;
+    const data = {
+      type,
+      resultCode: Result.ResultCode,
+      description: Result.ResultDesc,
+      mpesaCode: Result.TransactionID,
+      conversationID: Result.ConversationID,
+      originatorConversationID: Result.OriginatorConversationID,
+      resultData: Result?.ResultParameters || {},
+      updatedAt: Timestamp.now()
+    };
 
-    if (!conversationID) {
+    if (!data.conversationID) {
       throw new Error("Missing conversation ID");
     }
 
     // Update db
-    const transactionRef = db
-      .collection("withdrawals")
-      .doc(conversationID);
-    await transactionRef.update({
-      status: "timeout",
-      resultCode,
-      resultDesc,
-      conversationID,
-      mpesaCode: transactionID,
-      updatedAt: Timestamp.now(),
-    });
+    const transactionRef = db.collection("transactions").doc(data.conversationID);
+    await transactionRef.update(data);
 
-    console.log(`Transaction ${conversationID} marked as timeout`);
+    console.log(`Transaction ${data.conversationID} marked as timeout`);
 
     return res.status(200).json({ status: "Timeout" });
   } catch (error) {
