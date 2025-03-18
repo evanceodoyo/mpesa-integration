@@ -10,6 +10,6 @@ module.exports = {
     INITIATOR_NAME: process.env.INITIATOR_NAME,
     INITIATOR_PASSWORD: process.env.INITIATOR_PASSWORD,
     BASE_URL: process.env.BASE_URL,
-    BASE_API_URL: process.env.BASE_API_URL,
+    API_BASE_URL: process.env.API_BASE_URL,
     SECURITY_CERT_PATH: process.env.SECURITY_CERT_PATH,
 };

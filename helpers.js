@@ -136,8 +136,8 @@ const registerURLs = async () => {
     const requestBody = {
       ShortCode: config.SHORTCODE,
       ResponseType: "Completed",
-      ConfirmationURL: `${config.BASE_API_URL}/confirmation`,
-      ValidationURL: `${config.BASE_API_URL}/validation`,
+      ConfirmationURL: `${config.API_BASE_URL}/confirmation`,
+      ValidationURL: `${config.API_BASE_URL}/validation`,
     };
 
     const response = await fetch(
