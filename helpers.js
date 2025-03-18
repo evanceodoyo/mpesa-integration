@@ -1,7 +1,7 @@
 const fs = require("fs");
 const crypto = require("crypto");
 const path = require("path");
-const { Timestamp } = require("firebase-admin/firestore");
+const { Timestamp, FieldValue } = require("firebase-admin/firestore");
 const db = require("./firebase");
 const config = require("./config");
 
@@ -66,7 +66,67 @@ const generateSecurityCredential = (password, certPath) => {
 //   )
 // );
 
-// TODO: Implement status check and reversal of transactions
+
+const processMpesaResponse = async (req, res) => {
+  try {
+    const { Result } = req.body;
+    if (!Result) {
+      return res.status(400).json({ error: "Invalid response structure." });
+    }
+
+    // Determine the type based on the request path
+    let type = "unknown";
+    if (req.path.includes("withdraw")) type = "withdraw";
+    else if (req.path.includes("reversal")) type = "reversal";
+    else if (req.path.includes("transaction-status")) type = "status_check";
+
+    // Extracting common fields
+    const data = {
+      type,
+      resultCode: Result.ResultCode,
+      description: Result.ResultDesc,
+      mpesaCode: Result.TransactionID,
+      conversationID: Result.ConversationID,
+      originatorConversationID: Result.OriginatorConversationID,
+      resultData: Result?.ResultParameters || {},
+      updatedAt: Timestamp.now()
+    };
+
+    console.log(data); // Log result data
+
+    const resultItems = Result?.ResultParameters?.ResultParameter || [];
+    const getValue = (key) =>
+      resultItems.find((item) => item.Key === key)?.Value;
+
+    await db
+      .collection("transactions")
+      .doc(data.conversationID)
+      .set(data);
+
+    if (type === "withdraw" || type === "reversal") {
+      const amount = parseFloat(getValue("TransactionAmount") || getValue("Amount") || 0);
+
+      const userQuery = db
+        .collection("users")
+        .where("conversationID", "==", data.conversationID)
+        .limit(1);
+      const snapshot = await userQuery.get();
+
+      if (!snapshot.empty) {
+        const docRef = snapshot.docs[0].ref;
+        await docRef.update({ balance: FieldValue.increment(-amount) });
+        console.log(
+          `Balance updated successfully for user with conversationID: ${data.conversationID}`
+        );
+      }
+    }
+
+    return res.status(200).json({ status: "success" });
+  } catch (error) {
+    console.error("Error processing response:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
 
 
 const registerURLs = async () => {
@@ -76,8 +136,8 @@ const registerURLs = async () => {
     const requestBody = {
       ShortCode: config.SHORTCODE,
       ResponseType: "Completed",
-      ConfirmationURL: config.CONFIRMATION_URL,
-      ValidationURL: config.VALIDATION_URL,
+      ConfirmationURL: `${config.BASE_API_URL}/confirmation`,
+      ValidationURL: `${config.BASE_API_URL}/validation`,
     };
 
     const response = await fetch(
@@ -201,6 +261,7 @@ const updateTransaction = async (
 module.exports = {
   generateToken,
   generateSecurityCredential,
+  processMpesaResponse,
   formatPhoneNumber,
   saveUpdateUser,
   updateTransaction,
